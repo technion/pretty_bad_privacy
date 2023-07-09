@@ -42,7 +42,7 @@ impl SubKey {
             panic!("Subkey derivation coding bug");
         }
 
-        let info3 = [b1all, String::from("doing commitment\x01").into()].concat();
+        let info3 = [b1all, String::from("doing commitment\x03").into()].concat();
         let commitall =
             Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info3);
 
@@ -82,9 +82,39 @@ fn pbp_encrypt(subkey: SubKey, plaintext: &[u8], nonce: &[u8; 12]) {
 }
 
 fn main() {
-    println!("Hello, world!");
+    println!("Welcome to PBP!");
 
     let sk: SubKey = SubKey::new(b"EEEEEEEEEEEEEEEE", b"YELLOW SUBMARINEYELLOW SUBMARINE");
     println! {"{:?}", sk};
     pbp_encrypt(sk, b"this is my plaintext", b"123456789012");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn key_derive_matches_prototype() {
+        // This is the exact output from the Ruby prototype as a verifier
+        let sk: SubKey = SubKey::new(b"EEEEEEEEEEEEEEEE", b"YELLOW SUBMARINEYELLOW SUBMARINE");
+        assert_eq!(&sk.b0, b"\x50\x17\x8d\x3f\x59\x81\xb0\xed\xf7\x82\x1f\xff\x45\x46\x56\xbd");
+        assert_eq!(&sk.b1, b"\xdb\x9c\x68\x94\xf9\x96\xaf\x49\xc8\x74\x67\x41\x91\x72\xc4\x3e");
+        assert_eq!(&sk.commit, b"\x02\x43\x3d\x99\x12\x93\x8d\xde\xb9\x57\x4e\xd3\x5d\xf0\x0d\x9f");
+    }
+    #[test]
+    fn key_modified_doesnt_match() {
+        // A single byte changed in the key should invalidate all output
+        let sk: SubKey = SubKey::new(b"EEEEEEEEEEEEEEEE", b"YEBLOW SUBMARINEYELLOW SUBMARINE");
+        assert_ne!(&sk.b0, b"\x50\x17\x8d\x3f\x59\x81\xb0\xed\xf7\x82\x1f\xff\x45\x46\x56\xbd");
+        assert_ne!(&sk.b1, b"\xdb\x9c\x68\x94\xf9\x96\xaf\x49\xc8\x74\x67\x41\x91\x72\xc4\x3e");
+        assert_ne!(&sk.commit, b"\x02\x43\x3d\x99\x12\x93\x8d\xde\xb9\x57\x4e\xd3\x5d\xf0\x0d\x9f");
+    }
+
+    #[test]
+    fn nonce_modified_doesnt_match() {
+        // A single byte changed in the nonce should invalidate all output
+        let sk: SubKey = SubKey::new(b"REEEEEEEEEEEEEEE", b"YELLOW SUBMARINEYELLOW SUBMARINE");
+        assert_ne!(&sk.b0, b"\x50\x17\x8d\x3f\x59\x81\xb0\xed\xf7\x82\x1f\xff\x45\x46\x56\xbd");
+        assert_ne!(&sk.b1, b"\xdb\x9c\x68\x94\xf9\x96\xaf\x49\xc8\x74\x67\x41\x91\x72\xc4\x3e");
+        assert_ne!(&sk.commit, b"\x02\x43\x3d\x99\x12\x93\x8d\xde\xb9\x57\x4e\xd3\x5d\xf0\x0d\x9f");
+    }
 }

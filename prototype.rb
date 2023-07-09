@@ -5,7 +5,7 @@ require 'openssl'
 def derive_subkey(extension, key)
   raise "Invalid key length" if key.size != 32
   raise "Invalid extension length" if extension.size !=16
-  puts "Here with #{extension}"
+
   key.freeze # Just to be paranoid
 
   # Bigger Ruby rabbit hole than it should have been.
@@ -31,15 +31,16 @@ def derive_subkey(extension, key)
   encrypted2 = cipher.update("#{encrypted1}doing commitment\x03") + cipher.final
   c0 = encrypted2[encrypted2.size-16..encrypted2.size-1]
 
-  [b0 + b1, c0]
+  [b0, b1, c0]
 end
 
 K = "YELLOW SUBMARINE"*2
 E = "E"*16
 
-subkey, commit = derive_subkey(E, K)
-puts subkey.size
-puts subkey.unpack("H*").join
+subkey1, subkey2, commit = derive_subkey(E, K)
+puts subkey1.size
+puts subkey1.unpack("H*")
+puts subkey2.unpack("H*")
 
 puts commit.size
-puts commit.unpack("H*").join
+puts commit.unpack("H*")
