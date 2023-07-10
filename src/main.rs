@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use aes_gcm::{
     aead::{generic_array::GenericArray, Aead, KeyInit, Payload},
     aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit},

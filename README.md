@@ -9,6 +9,7 @@ The implemented algorithm is mostly described here: https://soatok.blog/2022/12/
 
 Some of the design changes we've made are:
 - Implement only 256 bit key support, we get to ignore the 128 bit  branch of the algorithm
+- Modifying the hash to look like the actual HKDF algorithm makes it less "roll your own" controversial
 - Implement a third derived output, a commitment key which is added to the Additional Data, used to mitigate key commitment complaints
 
 ## Prototype
