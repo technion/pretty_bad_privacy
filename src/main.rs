@@ -6,9 +6,14 @@ use aes_gcm::{
     aes::Aes256,
     Aes256Gcm, Key,
 };
+use std::fs;
+use std::fs::File;
+use std::io::prelude::*;
+use std::fmt;
+use std::str;
 
 type Aes256CbcEnc = cbc::Encryptor<Aes256>;
-use std::fmt;
+
 
 const BLOCKSIZE: usize = 16;
 
@@ -28,31 +33,25 @@ impl SubKey {
         let b0all =
             Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info1);
 
-        if let Some(b0chunk) = b0all.rchunks(BLOCKSIZE).nth(0) {
-            b0.copy_from_slice(b0chunk);
-        } else {
-            panic!("Subkey derivation coding bug");
-        }
+        // As BLOCKSIZE is hardcoded, the Option for next() finding a chunk should be impossible to fail
+        let b0chunk = b0all.rchunks(BLOCKSIZE).next().unwrap();
+        b0.copy_from_slice(b0chunk);
+
 
         let info2 = [b0all, String::from("doing b1\x02").into()].concat();
         let b1all =
             Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info2);
 
-        if let Some(b1chunk) = b1all.rchunks(BLOCKSIZE).nth(0) {
-            b1.copy_from_slice(b1chunk);
-        } else {
-            panic!("Subkey derivation coding bug");
-        }
+        let b1chunk = b1all.rchunks(BLOCKSIZE).next().unwrap();
+        b1.copy_from_slice(b1chunk);
 
         let info3 = [b1all, String::from("doing commitment\x03").into()].concat();
         let commitall =
             Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info3);
 
-        if let Some(commitchunk) = commitall.rchunks(BLOCKSIZE).nth(0) {
-            commit.copy_from_slice(commitchunk);
-        } else {
-            panic!("Subkey derivation coding bug");
-        }
+        let commitchunk = commitall.rchunks(BLOCKSIZE).next().unwrap();
+        commit.copy_from_slice(commitchunk);
+
         SubKey { b0, b1, commit }
     }
 }
@@ -68,7 +67,7 @@ impl fmt::Debug for SubKey {
     }
 }
 
-fn pbp_encrypt(subkey: SubKey, plaintext: &[u8], nonce: &[u8; 12]) {
+fn pbp_encrypt(subkey: &SubKey, plaintext: &[u8], nonce: &[u8; 12]) -> Vec<u8> {
     let key: &mut [u8; 32] = &mut [0; 32];
     key[..BLOCKSIZE].copy_from_slice(&subkey.b0);
     key[BLOCKSIZE..].copy_from_slice(&subkey.b1);
@@ -80,15 +79,37 @@ fn pbp_encrypt(subkey: SubKey, plaintext: &[u8], nonce: &[u8; 12]) {
 
     let cipher = Aes256Gcm::new(key);
     let nonce = GenericArray::from_slice(nonce);
-    let _ciphertext = cipher.encrypt(nonce, payload).unwrap();
+    cipher.encrypt(nonce, payload).unwrap()
+}
+
+fn pbp_decrypt(subkey: &SubKey, ciphertext: &[u8], nonce: &[u8; 12]) {
+    let key: &mut [u8; 32] = &mut [0; 32];
+    key[..BLOCKSIZE].copy_from_slice(&subkey.b0);
+    key[BLOCKSIZE..].copy_from_slice(&subkey.b1);
+    let key: &Key<Aes256Gcm> = Key::<Aes256Gcm>::from_slice(key);
+    let payload = Payload {
+        msg: ciphertext,
+        aad: &subkey.commit,
+    };
+
+    let cipher = Aes256Gcm::new(key);
+    let nonce = GenericArray::from_slice(nonce);
+    println!("{}", str::from_utf8(&cipher.decrypt(nonce, payload).unwrap()).unwrap());
 }
 
 fn main() {
     println!("Welcome to PBP!");
 
     let sk: SubKey = SubKey::new(b"EEEEEEEEEEEEEEEE", b"YELLOW SUBMARINEYELLOW SUBMARINE");
+
+    let plaintext = fs::read("tests/testinput.txt").unwrap();
     println! {"{:?}", sk};
-    pbp_encrypt(sk, b"this is my plaintext", b"123456789012");
+    let ciphertext = pbp_encrypt(&sk, &plaintext, b"123456789012");
+    let mut outfile = File::create("tests/testoutput.pbp").unwrap();
+    outfile.write_all(&ciphertext).unwrap();
+
+    let readback = fs::read("tests/testoutput.pbp").unwrap();
+    pbp_decrypt(&sk, &readback, b"123456789012");
 }
 
 #[cfg(test)]
