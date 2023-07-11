@@ -203,6 +203,7 @@ allow = [
 deny = [
     # Each entry the name of a crate and a version range. If version is
     # not specified, all versions will be matched.
+    { name = "tokio" } # Nothing against tokio, but this app doesn't need an async runtime and this will avoid accidentally pulling it in
     #{ name = "ansi_term", version = "=0.11.0" },
     #
     # Wrapper crates can optionally be specified to allow the crate when it
