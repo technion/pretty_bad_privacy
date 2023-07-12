@@ -6,6 +6,8 @@ use aes_gcm::{
     aes::Aes256,
     Aes256Gcm, Key,
 };
+use anyhow::{Error, Result};
+
 use rand::prelude::*;
 
 use std::fs;
@@ -71,7 +73,7 @@ impl fmt::Debug for SubKey {
 }
 
 // Uses the new Subkey algorithm to decrypt ciphertext with AES-256-GCM
-fn pbp_decrypt(subkey: &SubKey, ciphertext: &[u8], nonce: &[u8; NONCESIZE]) -> Vec<u8> {
+fn pbp_decrypt(subkey: &SubKey, ciphertext: &[u8], nonce: &[u8; NONCESIZE]) -> Result<Vec<u8>, anyhow::Error> {
     let key: &mut [u8; 32] = &mut [0; 32];
     key[..BLOCKSIZE].copy_from_slice(&subkey.b0);
     key[BLOCKSIZE..].copy_from_slice(&subkey.b1);
@@ -82,12 +84,12 @@ fn pbp_decrypt(subkey: &SubKey, ciphertext: &[u8], nonce: &[u8; NONCESIZE]) -> V
     };
 
     let cipher = Aes256Gcm::new(key);
-    cipher.decrypt(nonce.into(), payload).unwrap()
+    Ok(cipher.decrypt(nonce.into(), payload).map_err(Error::msg)?)
 }
 
 // Uses the new Subkey algorithm to decrypt ciphertext with AES-256-GCM
 // Return Vec is nonce || cipher
-fn pbp_encrypt(subkey: &SubKey, plaintext: &[u8], nonce: &[u8; NONCESIZE]) -> Vec<u8> {
+fn pbp_encrypt(subkey: &SubKey, plaintext: &[u8], nonce: &[u8; NONCESIZE]) -> Result<Vec<u8>, anyhow::Error> {
     // The actual key requires joining the subkeys
     let key: &mut [u8; 32] = &mut [0; 32];
     key[..BLOCKSIZE].copy_from_slice(&subkey.b0);
@@ -99,48 +101,50 @@ fn pbp_encrypt(subkey: &SubKey, plaintext: &[u8], nonce: &[u8; NONCESIZE]) -> Ve
     };
 
     let cipher = Aes256Gcm::new(key);
-    [
+    Ok([
         nonce.to_vec(),
-        cipher.encrypt(nonce.into(), payload).unwrap(),
+        cipher.encrypt(nonce.into(), payload).map_err(Error::msg)?,
     ]
-    .concat()
+    .concat())
 }
 
-fn pbp_decrypt_file(filename: &str, key: &[u8]) -> Vec<u8> {
+fn pbp_decrypt_file(filename: &str, key: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
     let mut extension = [0u8; BLOCKSIZE];
     let mut readnonce: [u8; NONCESIZE] = [0u8; NONCESIZE];
     let mut contents = vec![];
     let mut readback = File::open(filename).unwrap();
 
     // Valid file format is three chunks: extension, nonce, ciphertext.
-    readback.read_exact(&mut extension).unwrap();
-    readback.read_exact(&mut readnonce).unwrap();
-    readback.read_to_end(&mut contents).unwrap();
+    readback.read_exact(&mut extension)?;
+    readback.read_exact(&mut readnonce)?;
+    readback.read_to_end(&mut contents)?;
     let sk: SubKey = SubKey::new(&extension, key.try_into().unwrap());
-    pbp_decrypt(&sk, &contents, &readnonce)
+    Ok(pbp_decrypt(&sk, &contents, &readnonce)?)
 }
 
-fn pbp_encrypt_file(filename: &str, key: &[u8]) {
+fn pbp_encrypt_file(filename: &str, key: &[u8]) -> Result<(), anyhow::Error> {
     let mut extension = [0u8; BLOCKSIZE];
     rand::thread_rng().fill_bytes(&mut extension);
     let sk: SubKey = SubKey::new(&extension, key.try_into().unwrap());
 
-    let plaintext = fs::read(filename).unwrap();
+    let plaintext = fs::read(filename)?;
     let mut nonce: [u8; NONCESIZE] = [0; NONCESIZE];
     rand::thread_rng().fill_bytes(&mut nonce);
 
-    let ciphertext = pbp_encrypt(&sk, &plaintext, &nonce);
-    let mut outfile = File::create("tests/testoutput.pbp").unwrap();
-    outfile.write_all(&extension).unwrap();
-    outfile.write_all(&ciphertext).unwrap();
+    let ciphertext = pbp_encrypt(&sk, &plaintext, &nonce).map_err(Error::msg)?;
+    let mut outfile = File::create("tests/testoutput.pbp")?;
+    outfile.write_all(&extension)?;
+    outfile.write_all(&ciphertext)?;
+    Ok(())
 }
 
 fn main() {
     println!("Welcome to PBP!");
 
-    pbp_encrypt_file("tests/testinput.txt", b"YELLOW SUBMARINEYELLOW SUBMARINE");
+    pbp_encrypt_file("tests/testinput.txt", b"YELLOW SUBMARINEYELLOW SUBMARINE").unwrap();
     let recovered = pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYELLOW SUBMARINE");
-    println!("{}", str::from_utf8(&recovered).unwrap());
+    println!("{}", str::from_utf8(&recovered.unwrap()).unwrap());
+
 }
 
 #[cfg(test)]
@@ -202,16 +206,23 @@ mod tests {
     #[test]
     fn decrypts_file_correctly() {
         let recovered =
-            pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYELLOW SUBMARINE");
+            pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYELLOW SUBMARINE").unwrap();
         let plaintext = str::from_utf8(&recovered).unwrap();
         let correct = include_str!("../tests/testinput.txt");
         assert_eq!(plaintext, correct);
     }
 
     #[test]
-    #[should_panic]
     fn decrypt_fail_key() {
-        let _recovered =
-            pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYEBLOW SUBMARINE");
+        let recovered =
+            pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYEBLOW SUBMARINE").unwrap_err();
+        assert_eq!(recovered.to_string(), "aead::Error");
     }
+
+    #[test]
+    fn decrypt_missing_file() {
+        let recovered = pbp_encrypt_file("tests/Idontexist.dat", b"YELLOW SUBMARINEYELLOW SUBMARINE").unwrap_err();
+        assert_eq!(recovered.to_string(), "The system cannot find the file specified. (os error 2)");
+    }
+
 }

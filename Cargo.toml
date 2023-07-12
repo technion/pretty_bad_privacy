@@ -9,3 +9,4 @@ edition = "2021"
 "cbc" = { version = "0.1.2", features = [ "alloc", "block-padding", "zeroize" ] }
 "aes-gcm" = { version = "0.10.2", features = [ "zeroize" ]}
 "rand" = "0.8.5"
+"anyhow" = "1.0.71"
