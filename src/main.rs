@@ -123,11 +123,11 @@ mod tests {
     #[test]
     fn decrypt_missing_file() {
         let recovered =
-            pbp_encrypt_file("tests/Idontexist.dat", b"YELLOW SUBMARINEYELLOW SUBMARINE")
-                .unwrap_err();
+            pbp_encrypt_file("tests/Idontexist.dat", b"YELLOW SUBMARINEYELLOW SUBMARINE").unwrap_err();
+        let recovered_err = recovered.downcast_ref::<std::io::Error>().expect("Failed to produce an error");
         assert_eq!(
-            recovered.to_string(),
-            "The system cannot find the file specified. (os error 2)"
+            recovered_err.kind(),
+            std::io::ErrorKind::NotFound
         );
     }
 }
