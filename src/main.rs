@@ -2,8 +2,6 @@
 
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
-    aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit},
-    aes::Aes256,
     Aes256Gcm, Key,
 };
 use anyhow::{Error, Result};
@@ -15,69 +13,20 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::str;
 
-type Aes256CbcEnc = cbc::Encryptor<Aes256>;
-
 const BLOCKSIZE: usize = 16;
 const NONCESIZE: usize = 12; // Defined as 96 bits. 96/8.
 
-struct SubKey {
-    b0: [u8; BLOCKSIZE],
-    b1: [u8; BLOCKSIZE],
-    commit: [u8; BLOCKSIZE],
-}
-
-impl SubKey {
-    fn new(extension: &[u8; BLOCKSIZE], key: &[u8; 32]) -> SubKey {
-        let niliv = [0; BLOCKSIZE];
-        let mut b0 = [0; BLOCKSIZE];
-        let mut b1 = [0; BLOCKSIZE];
-        let mut commit = [0; BLOCKSIZE];
-        let info1 = [extension, String::from("doing b0\x01").as_bytes()].concat();
-        let b0all =
-            Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info1);
-
-        // As BLOCKSIZE is hardcoded, the Option for next() finding a chunk should be impossible to fail
-        let b0chunk = b0all.rchunks(BLOCKSIZE).next().unwrap();
-        b0.copy_from_slice(b0chunk);
-
-        let info2 = [b0all, String::from("doing b1\x02").into()].concat();
-        let b1all =
-            Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info2);
-
-        let b1chunk = b1all.rchunks(BLOCKSIZE).next().unwrap();
-        b1.copy_from_slice(b1chunk);
-
-        let info3 = [b1all, String::from("doing commitment\x03").into()].concat();
-        let commitall =
-            Aes256CbcEnc::new(key.into(), &niliv.into()).encrypt_padded_vec_mut::<Pkcs7>(&info3);
-
-        let commitchunk = commitall.rchunks(BLOCKSIZE).next().unwrap();
-        commit.copy_from_slice(commitchunk);
-
-        SubKey { b0, b1, commit }
-    }
-}
-
-// A custom debugger allows us to get output in hex
-// This should never exist. However, it has been repeatedly re-introduced for debugging.
-// To faciliate this, we place it under a non existent feature.
-#[cfg(feature = "never")]
-impl fmt::Debug for SubKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "b0, b1 are {:02x?}, {:02x?} and commit tag is {:02x?}",
-            self.b0, self.b1, self.commit
-        )
-    }
-}
+mod pbp_subkey;
+use pbp_subkey::SubKey;
 
 // Uses the new Subkey algorithm to decrypt ciphertext with AES-256-GCM
-fn pbp_decrypt(subkey: &SubKey, ciphertext: &[u8], nonce: &[u8; NONCESIZE]) -> Result<Vec<u8>, anyhow::Error> {
-    let key: &mut [u8; 32] = &mut [0; 32];
-    key[..BLOCKSIZE].copy_from_slice(&subkey.b0);
-    key[BLOCKSIZE..].copy_from_slice(&subkey.b1);
-    let key: &Key<Aes256Gcm> = Key::<Aes256Gcm>::from_slice(key);
+fn pbp_decrypt(
+    subkey: &mut SubKey,
+    ciphertext: &[u8],
+    nonce: &[u8; NONCESIZE],
+) -> Result<Vec<u8>, anyhow::Error> {
+    let key = subkey.get_keys();
+    let key: &Key<Aes256Gcm> = Key::<Aes256Gcm>::from_slice(&key);
     let payload = Payload {
         msg: ciphertext,
         aad: &subkey.commit,
@@ -89,12 +38,14 @@ fn pbp_decrypt(subkey: &SubKey, ciphertext: &[u8], nonce: &[u8; NONCESIZE]) -> R
 
 // Uses the new Subkey algorithm to decrypt ciphertext with AES-256-GCM
 // Return Vec is nonce || cipher
-fn pbp_encrypt(subkey: &SubKey, plaintext: &[u8], nonce: &[u8; NONCESIZE]) -> Result<Vec<u8>, anyhow::Error> {
+fn pbp_encrypt(
+    subkey: &mut SubKey,
+    plaintext: &[u8],
+    nonce: &[u8; NONCESIZE],
+) -> Result<Vec<u8>, anyhow::Error> {
     // The actual key requires joining the subkeys
-    let key: &mut [u8; 32] = &mut [0; 32];
-    key[..BLOCKSIZE].copy_from_slice(&subkey.b0);
-    key[BLOCKSIZE..].copy_from_slice(&subkey.b1);
-    let key: &Key<Aes256Gcm> = Key::<Aes256Gcm>::from_slice(key);
+    let key = subkey.get_keys();
+    let key: &Key<Aes256Gcm> = Key::<Aes256Gcm>::from_slice(&key);
     let payload = Payload {
         msg: plaintext,
         aad: &subkey.commit,
@@ -108,7 +59,7 @@ fn pbp_encrypt(subkey: &SubKey, plaintext: &[u8], nonce: &[u8; NONCESIZE]) -> Re
     .concat())
 }
 
-fn pbp_decrypt_file(filename: &str, key: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+fn pbp_decrypt_file(filename: &str, key: &[u8; 32]) -> Result<Vec<u8>, anyhow::Error> {
     let mut extension = [0u8; BLOCKSIZE];
     let mut readnonce: [u8; NONCESIZE] = [0u8; NONCESIZE];
     let mut contents = vec![];
@@ -118,20 +69,19 @@ fn pbp_decrypt_file(filename: &str, key: &[u8]) -> Result<Vec<u8>, anyhow::Error
     readback.read_exact(&mut extension)?;
     readback.read_exact(&mut readnonce)?;
     readback.read_to_end(&mut contents)?;
-    let sk: SubKey = SubKey::new(&extension, key.try_into().unwrap());
-    Ok(pbp_decrypt(&sk, &contents, &readnonce)?)
+    let mut sk: SubKey = SubKey::new(&extension, key.try_into().unwrap());
+    Ok(pbp_decrypt(&mut sk, &contents, &readnonce)?)
 }
 
-fn pbp_encrypt_file(filename: &str, key: &[u8]) -> Result<(), anyhow::Error> {
+fn pbp_encrypt_file(filename: &str, key: &[u8; 32]) -> Result<(), anyhow::Error> {
     let mut extension = [0u8; BLOCKSIZE];
     rand::thread_rng().fill_bytes(&mut extension);
-    let sk: SubKey = SubKey::new(&extension, key.try_into().unwrap());
-
+    let mut sk: SubKey = SubKey::new(&extension, key.try_into().unwrap());
     let plaintext = fs::read(filename)?;
     let mut nonce: [u8; NONCESIZE] = [0; NONCESIZE];
     rand::thread_rng().fill_bytes(&mut nonce);
 
-    let ciphertext = pbp_encrypt(&sk, &plaintext, &nonce).map_err(Error::msg)?;
+    let ciphertext = pbp_encrypt(&mut sk, &plaintext, &nonce).map_err(Error::msg)?;
     let mut outfile = File::create("tests/testoutput.pbp")?;
     outfile.write_all(&extension)?;
     outfile.write_all(&ciphertext)?;
@@ -141,67 +91,17 @@ fn pbp_encrypt_file(filename: &str, key: &[u8]) -> Result<(), anyhow::Error> {
 fn main() {
     println!("Welcome to PBP!");
 
-    pbp_encrypt_file("tests/testinput.txt", b"YELLOW SUBMARINEYELLOW SUBMARINE").unwrap();
-    let recovered = pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYELLOW SUBMARINE");
-    println!("{}", str::from_utf8(&recovered.unwrap()).unwrap());
+    let key: &[u8; 32] = b"YELLOW SUBMARINEYELLOW SUBMARINE";
+    pbp_encrypt_file("tests/testinput.txt", key).unwrap();
+    let recovered = pbp_decrypt_file("tests/testoutput.pbp", key);
 
+    println!("{}", str::from_utf8(&recovered.unwrap()).unwrap());
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    #[test]
-    fn key_derive_matches_prototype() {
-        // This is the exact output from the Ruby prototype as a verifier
-        let sk: SubKey = SubKey::new(b"EEEEEEEEEEEEEEEE", b"YELLOW SUBMARINEYELLOW SUBMARINE");
-        assert_eq!(
-            &sk.b0,
-            b"\x50\x17\x8d\x3f\x59\x81\xb0\xed\xf7\x82\x1f\xff\x45\x46\x56\xbd"
-        );
-        assert_eq!(
-            &sk.b1,
-            b"\xdb\x9c\x68\x94\xf9\x96\xaf\x49\xc8\x74\x67\x41\x91\x72\xc4\x3e"
-        );
-        assert_eq!(
-            &sk.commit,
-            b"\x02\x43\x3d\x99\x12\x93\x8d\xde\xb9\x57\x4e\xd3\x5d\xf0\x0d\x9f"
-        );
-    }
-    #[test]
-    fn key_modified_doesnt_match() {
-        // A single byte changed in the key should invalidate all output
-        let sk: SubKey = SubKey::new(b"EEEEEEEEEEEEEEEE", b"YEBLOW SUBMARINEYELLOW SUBMARINE");
-        assert_ne!(
-            &sk.b0,
-            b"\x50\x17\x8d\x3f\x59\x81\xb0\xed\xf7\x82\x1f\xff\x45\x46\x56\xbd"
-        );
-        assert_ne!(
-            &sk.b1,
-            b"\xdb\x9c\x68\x94\xf9\x96\xaf\x49\xc8\x74\x67\x41\x91\x72\xc4\x3e"
-        );
-        assert_ne!(
-            &sk.commit,
-            b"\x02\x43\x3d\x99\x12\x93\x8d\xde\xb9\x57\x4e\xd3\x5d\xf0\x0d\x9f"
-        );
-    }
 
-    #[test]
-    fn nonce_modified_doesnt_match() {
-        // A single byte changed in the nonce should invalidate all output
-        let sk: SubKey = SubKey::new(b"REEEEEEEEEEEEEEE", b"YELLOW SUBMARINEYELLOW SUBMARINE");
-        assert_ne!(
-            &sk.b0,
-            b"\x50\x17\x8d\x3f\x59\x81\xb0\xed\xf7\x82\x1f\xff\x45\x46\x56\xbd"
-        );
-        assert_ne!(
-            &sk.b1,
-            b"\xdb\x9c\x68\x94\xf9\x96\xaf\x49\xc8\x74\x67\x41\x91\x72\xc4\x3e"
-        );
-        assert_ne!(
-            &sk.commit,
-            b"\x02\x43\x3d\x99\x12\x93\x8d\xde\xb9\x57\x4e\xd3\x5d\xf0\x0d\x9f"
-        );
-    }
+    use super::*;
 
     #[test]
     fn decrypts_file_correctly() {
@@ -215,14 +115,19 @@ mod tests {
     #[test]
     fn decrypt_fail_key() {
         let recovered =
-            pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYEBLOW SUBMARINE").unwrap_err();
+            pbp_decrypt_file("tests/testoutput.pbp", b"YELLOW SUBMARINEYEBLOW SUBMARINE")
+                .unwrap_err();
         assert_eq!(recovered.to_string(), "aead::Error");
     }
 
     #[test]
     fn decrypt_missing_file() {
-        let recovered = pbp_encrypt_file("tests/Idontexist.dat", b"YELLOW SUBMARINEYELLOW SUBMARINE").unwrap_err();
-        assert_eq!(recovered.to_string(), "The system cannot find the file specified. (os error 2)");
+        let recovered =
+            pbp_encrypt_file("tests/Idontexist.dat", b"YELLOW SUBMARINEYELLOW SUBMARINE")
+                .unwrap_err();
+        assert_eq!(
+            recovered.to_string(),
+            "The system cannot find the file specified. (os error 2)"
+        );
     }
-
 }
