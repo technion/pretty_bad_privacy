@@ -28,4 +28,4 @@ jobs:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
     - name: Run Linter
-      run: cargo clippy
+      run: cargo clippy -- -W clippy::pedantic -W clippy::integer_arithmetic -Dwarnings

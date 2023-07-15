@@ -66,7 +66,7 @@ impl SubKey {
     pub fn get_keys(&mut self) -> [u8; 32] {
         // The only way to get keys out of this SubKey structure is to use this function
         // This sets a burnt flag and guarantees they (and by association, the nonce extension) is single use
-        assert!(self.burnt == false);
+        assert!(!self.burnt);
         let key: &mut [u8; 32] = &mut [0; 32];
         key[..BLOCKSIZE].copy_from_slice(&self.b0.expose_secret().as_bytes());
         key[BLOCKSIZE..].copy_from_slice(&self.b1.expose_secret().as_bytes());

@@ -60,7 +60,7 @@ fn pbp_decrypt(
     };
 
     let cipher = Aes256Gcm::new(key);
-    Ok(cipher.decrypt(nonce.into(), payload).map_err(Error::msg)?)
+    cipher.decrypt(nonce.into(), payload).map_err(Error::msg)
 }
 
 // Uses the new Subkey algorithm to decrypt ciphertext with AES-256-GCM
@@ -97,7 +97,7 @@ fn pbp_decrypt_file(filename: &str, key: &SecretAESKey) -> Result<Vec<u8>, anyho
     readback.read_exact(&mut readnonce)?;
     readback.read_to_end(&mut contents)?;
     let mut sk: SubKey = SubKey::new(&extension, &key.expose_secret().as_bytes());
-    Ok(pbp_decrypt(&mut sk, &contents, &readnonce)?)
+    pbp_decrypt(&mut sk, &contents, &readnonce)
 }
 
 fn pbp_encrypt_file(filename: &str, outfile: &str, key: &SecretAESKey) -> Result<(), anyhow::Error> {
@@ -144,7 +144,7 @@ fn main() {
         match pbp_decrypt_file(&decryptfile, &myaeskey) {
             Err(recovered_err) => {
                 if let Some(recovered_err_io) = recovered_err.downcast_ref::<std::io::Error>() {
-                    eprintln!("Error reading encryption input file: {}", recovered_err_io.to_string())
+                    eprintln!("Error reading encryption input file: {recovered_err_io}");
                 } else if let Some(_recovered_err_aead) = recovered_err.downcast_ref::<aes_gcm::aead::Error>()
                 {
                     // This error is opaque and will not contain a message string.
