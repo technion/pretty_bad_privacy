@@ -3,6 +3,8 @@
 
 Theoretically this app should produce pretty good privacy. Theory however is not aligned with practice. No matter how clear I make it that this is a weekend Rust project, someone get upset about "rolling your own crypto". This app is named `PBP` specifically to make such project status clear.
 
+Note that as this is just a block cipher implementation, the hard part of crypto (key management) isn't considered. The passphrase hash is just there to ensure whatever you supply is the right length.
+
 ## Algorithm
 
 The implemented algorithm is mostly described here: https://soatok.blog/2022/12/21/extending-the-aes-gcm-nonce-without-nightmare-fuel/
