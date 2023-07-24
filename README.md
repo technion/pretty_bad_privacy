@@ -17,3 +17,11 @@ Some of the design changes we've made are:
 ## Prototype
 
 There's a Ruby script in this repo that implements the workflow in a simple to read format, which serves to produce output validation.
+
+## Fuzzing
+
+There's a fuzzer written for the decryption process. It's a bit of a hack as cargo fuzz is built to work with files, but with Rust nightly on a supported OS, it can be run. Doing so requires commenting out the `#![forbid(unsafe_code)]` in main.rs temporarily.
+
+```
+$ cargo fuzz run fuzz_target_2 -- -max_total_time=120
+```
