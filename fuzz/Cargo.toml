@@ -1,0 +1,33 @@
+[package]
+name = "pretty-bad-privacy-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3.6.0"
+"cbc" = { version = "0.1.2", features = [ "alloc", "block-padding", "zeroize" ] }
+"aes-gcm" = { version = "0.10.2", features = [ "zeroize" ]}
+"rand" = "0.8.5"
+"anyhow" = "1.0.71"
+"secrecy" = "0.8.0"
+"sha2" = "0.10.7"
+"clap" = { version = "4.3.10", features = ["derive"] }
+
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_target_2"
+path = "fuzz_targets/fuzz_target_2.rs"
+test = false
+doc = false
